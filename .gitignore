@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local database and private financial data
+/data/
+*.db
+*.xlsx
+*.csv
+
+# scratch and temporary inspection files
+/scratch/
+/inspect_balance_sheet.txt
+/sheet_rows.txt
+*.log
