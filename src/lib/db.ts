@@ -1,14 +1,17 @@
-import sqlite3 from 'sqlite3';
-import { open, Database } from 'sqlite';
 import path from 'path';
 import fs from 'fs';
 
-let dbInstance: Database | null = null;
+let dbInstance: any = null;
 
 // Database file path
 const DB_PATH = path.join(process.cwd(), 'data', 'portfolio.db');
 
-export async function getDb(): Promise<Database | null> {
+export async function getDb(): Promise<any | null> {
+  // If running in Vercel, do not attempt to load or use SQLite
+  if (process.env.VERCEL) {
+    return null;
+  }
+
   if (dbInstance) {
     return dbInstance;
   }
@@ -19,11 +22,15 @@ export async function getDb(): Promise<Database | null> {
     try {
       fs.mkdirSync(dataDir, { recursive: true });
     } catch (err) {
-      console.warn(`Failed to create data directory ${dataDir} (this is normal in read-only environments like Vercel):`, err);
+      console.warn(`Failed to create data directory ${dataDir}:`, err);
     }
   }
 
   try {
+    // Dynamically require/import to prevent native library load errors during build on Vercel
+    const sqlite3 = (await import('sqlite3')).default;
+    const { open } = await import('sqlite');
+
     // Open database connection
     dbInstance = await open({
       filename: DB_PATH,
@@ -193,7 +200,7 @@ export async function getCachedPortfolio(account?: string): Promise<CachedAsset[
     } else {
       rows = await db.all('SELECT * FROM portfolio_cache');
     }
-    return rows.map(r => ({
+    return rows.map((r: any) => ({
       account: r.account,
       asset_name: r.asset_name,
       symbol: r.symbol,
