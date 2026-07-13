@@ -122,3 +122,55 @@ export function parseMiraeAssetCSV(buffer: Buffer): Transaction[] {
 
   return transactions;
 }
+
+export interface IRPBalance {
+  name: string;          // 종목명
+  quantity: number;      // 보유량
+  purchaseAmount: number;// 매입금액
+  evalAmount: number;    // 평가금액
+  profitLoss: number;    // 평가손익
+  yieldPct: number;      // 수익률
+  ratio: number;         // 운용비율
+}
+
+/**
+ * Parses a Mirae Asset IRP Balance CSV file buffer (encoded in CP949 / EUC-KR)
+ * into an array of IRPBalance objects.
+ */
+export function parseIRPBalanceCSV(buffer: Buffer): IRPBalance[] {
+  const decoder = new TextDecoder('euc-kr');
+  const csvText = decoder.decode(buffer);
+
+  const parsed = Papa.parse<string[]>(csvText, {
+    skipEmptyLines: true,
+  });
+
+  const rows = parsed.data;
+  if (rows.length < 2) {
+    return [];
+  }
+
+  const balances: IRPBalance[] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 7) continue;
+
+    const name = String(row[0] || '').trim();
+    if (!name || name === 'nan' || name === 'NaN' || name === '종목명') {
+      continue;
+    }
+
+    balances.push({
+      name,
+      quantity: parseNumber(row[1]),
+      purchaseAmount: parseNumber(row[2]),
+      evalAmount: parseNumber(row[3]),
+      profitLoss: parseNumber(row[4]),
+      yieldPct: parseNumber(row[5]),
+      ratio: parseNumber(row[6]),
+    });
+  }
+
+  return balances;
+}

@@ -1,5 +1,5 @@
 import { readSheetValuesFromGAS, appendSheetValuesToGAS } from './google-sheets';
-import { parseMiraeAssetCSV, Transaction } from './parser';
+import { parseMiraeAssetCSV, Transaction, IRPBalance } from './parser';
 
 function parseNumber(val: any): number {
   if (val === undefined || val === null) return 0;
@@ -228,4 +228,264 @@ export async function syncTransactions(
     newCount: newTxs.length,
     newTransactions: newTxs,
   };
+}
+
+/**
+ * Calculates current asset balances (quantity, avgPrice) from transaction history.
+ */
+export function calculateBalancesFromTransactions(transactions: Transaction[]): Record<string, { quantity: number; avgPrice: number; name: string }> {
+  // 1. Sort transactions chronologically
+  const sorted = [...transactions].sort((a, b) => {
+    const da = normalizeDate(a.date);
+    const db = normalizeDate(b.date);
+    if (da !== db) return da.localeCompare(db);
+    return a.seq - b.seq;
+  });
+
+  // 2. Match and merge split stock/cash transaction pairs
+  for (let i = 0; i < sorted.length; i++) {
+    const tx = sorted[i];
+    if (!tx.symbol) continue;
+    const isBuy = tx.type.includes('매수');
+    const isSell = tx.type.includes('매도');
+    if ((isBuy || isSell) && (!tx.quantity || tx.quantity === 0)) {
+      // Look for a cash transaction to merge
+      const match = sorted.find(t => 
+        !t.symbol && 
+        normalizeDate(t.date) === normalizeDate(tx.date) && 
+        t.amount === tx.amount && 
+        t.quantity && t.quantity > 0
+      );
+      if (match) {
+        tx.quantity = match.quantity;
+        tx.price = match.price;
+        tx.name = match.name || tx.name;
+        // Mark match to be ignored
+        match.symbol = 'IGNORED';
+      }
+    }
+  }
+
+  // Filter out ignored cash transactions
+  const cleanSorted = sorted.filter(t => t.symbol && t.symbol !== 'IGNORED');
+
+  // 3. Find latest transaction for each symbol that contains a valid balance update
+  const latestTxMap: Record<string, Transaction> = {};
+  for (const tx of cleanSorted) {
+    if (!tx.symbol) continue;
+    // Only update latest transaction if it represents a physical stock/fund quantity change
+    if (tx.quantity !== null && tx.quantity > 0) {
+      latestTxMap[tx.symbol] = tx;
+    }
+  }
+
+  // 4. Chronological calculation for average price
+  const balances: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
+  for (const tx of cleanSorted) {
+    const symbol = tx.symbol;
+    if (!balances[symbol]) {
+      balances[symbol] = { quantity: 0, avgPrice: 0, name: tx.name };
+    }
+
+    const bal = balances[symbol];
+    const isFund = !(symbol.startsWith('A') && symbol.length === 7);
+
+    if (tx.type.includes('매수')) {
+      if (tx.quantity && tx.quantity > 0) {
+        const txQty = tx.quantity;
+        const txCost = tx.amount + tx.fee + tx.tax;
+        const oldQty = bal.quantity;
+        const oldAvg = bal.avgPrice;
+
+        if (isFund) {
+          const oldCost = (oldQty * oldAvg) / 1000;
+          const newCost = oldCost + txCost;
+          const newQty = oldQty + txQty;
+          const newAvg = newQty > 0 ? (newCost * 1000) / newQty : 0;
+
+          bal.quantity = newQty;
+          bal.avgPrice = Math.round(newAvg * 100) / 100;
+        } else {
+          const oldCost = oldQty * oldAvg;
+          const newCost = oldCost + txCost;
+          const newQty = oldQty + txQty;
+          const newAvg = newQty > 0 ? newCost / newQty : 0;
+
+          bal.quantity = newQty;
+          bal.avgPrice = Math.round(newAvg);
+        }
+      }
+    } else if (tx.type.includes('매도')) {
+      if (tx.quantity && tx.quantity > 0) {
+        bal.quantity = Math.max(0, bal.quantity - tx.quantity);
+        if (bal.quantity === 0) {
+          bal.avgPrice = 0;
+        }
+      }
+    }
+  }
+
+  // 5. Combine: Use latest transaction's stockBalance for quantity
+  const result: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
+  for (const symbol in latestTxMap) {
+    const latestTx = latestTxMap[symbol];
+    const calcBal = balances[symbol] || { avgPrice: 0, name: latestTx.name };
+    
+    // Exact quantity from latest transaction
+    const exactQty = latestTx.stockBalance;
+    
+    result[symbol] = {
+      quantity: exactQty,
+      avgPrice: exactQty > 0 ? calcBal.avgPrice : 0,
+      name: latestTx.name
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Synchronizes the calculated/parsed balances to the "종합잔고조회" sheet on GAS.
+ */
+export async function syncBalanceSheet(
+  gasUrl: string,
+  updates180?: Record<string, { quantity: number; avgPrice: number }>,
+  updates660?: Record<string, { quantity: number; avgPrice: number }>,
+  updatesIRP?: IRPBalance[]
+): Promise<void> {
+  const sheetRows = await readSheetValuesFromGAS(gasUrl, '종합잔고조회');
+  if (sheetRows.length === 0) return;
+
+  const updatesPayload: Array<{ row: number; col: number; values: any[] }> = [];
+
+  let totalRowIdx = -1;
+  for (let i = 0; i < sheetRows.length; i++) {
+    const row = sheetRows[i];
+    if (row && String(row[6] || '').trim() === '계좌 total 금액') {
+      totalRowIdx = i + 1;
+      break;
+    }
+  }
+
+  if (totalRowIdx === -1) {
+    console.warn('Could not find "계좌 total 금액" row in 종합잔고조회 sheet.');
+    return;
+  }
+
+  const etfBrands = ['kodex', 'tiger', 'ace', 'rise', 'plus', 'sol', 'kbstar', 'hanaro', 'kosef', 'arirang'];
+
+  for (let r = 4; r <= totalRowIdx - 2; r++) {
+    const row = sheetRows[r - 1];
+    if (!row) continue;
+
+    const accountType = String(row[0] || '').trim();
+    const symbol = String(row[1] || '').trim();
+    const name = String(row[2] || '').trim();
+
+    if (accountType === '180' && updates180) {
+      if (symbol && symbol !== 'nan' && symbol !== '') {
+        const bal = updates180[symbol];
+        const qty = bal ? bal.quantity : 0;
+        const avg = bal ? bal.avgPrice : 0;
+        updatesPayload.push({
+          row: r,
+          col: 5, // Column E: 보유량
+          values: [qty, avg]
+        });
+      }
+    } else if (accountType === '660' && updates660) {
+      if (symbol && symbol !== 'nan' && symbol !== '') {
+        const bal = updates660[symbol];
+        const qty = bal ? bal.quantity : 0;
+        const avg = bal ? bal.avgPrice : 0;
+        updatesPayload.push({
+          row: r,
+          col: 5, // Column E: 보유량
+          values: [qty, avg]
+        });
+      }
+    } else if (accountType === 'IRP' && updatesIRP) {
+      if (name && name !== 'nan' && name !== '') {
+        const bal = updatesIRP.find(b => b.name === name);
+        const cleanName = name.toLowerCase().replace(/\s+/g, '');
+        const isEtf = etfBrands.some(brand => cleanName.startsWith(brand));
+        const isCash = name.includes('현금') || name.includes('예수금');
+
+        if (bal) {
+          const qty = bal.quantity;
+          const purchaseAmount = bal.purchaseAmount;
+          const evalAmount = bal.evalAmount;
+          const ratio = bal.ratio;
+
+          let avg: number | null = null;
+          let current: number | null = null;
+
+          if (!isCash) {
+            if (isEtf) {
+              avg = qty > 0 ? purchaseAmount / qty : 0;
+              current = qty > 0 ? evalAmount / qty : 0;
+            } else {
+              avg = qty > 0 ? (purchaseAmount * 1000) / qty : 0;
+              current = qty > 0 ? (evalAmount * 1000) / qty : 0;
+            }
+          }
+
+          updatesPayload.push({
+            row: r,
+            col: 5, // Column E: 보유량, 평균단가, 현재가, 매입금액, 평가금액
+            values: [
+              qty,
+              avg !== null ? Math.round(avg * 100) / 100 : '',
+              current !== null ? Math.round(current * 100) / 100 : '',
+              purchaseAmount,
+              evalAmount
+            ]
+          });
+          updatesPayload.push({
+            row: r,
+            col: 12, // Column L: 운용비율
+            values: [ratio]
+          });
+        } else {
+          // If the asset exists in the sheet but not in the uploaded CSV, set to 0.
+          updatesPayload.push({
+            row: r,
+            col: 5,
+            values: [0, '', '', 0, 0]
+          });
+          updatesPayload.push({
+            row: r,
+            col: 12,
+            values: [0]
+          });
+        }
+      }
+    }
+  }
+
+  if (updatesPayload.length === 0) return;
+
+  const payload = {
+    action: 'updateBalances',
+    updates: updatesPayload
+  };
+
+  const response = await fetch(gasUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(`종합잔고조회 시트 업데이트 전송 실패 (HTTP ${response.status})`);
+  }
+
+  const resData = await response.json();
+  if (!resData.success) {
+    throw new Error(resData.error || '종합잔고조회 시트 업데이트에 실패했습니다.');
+  }
 }

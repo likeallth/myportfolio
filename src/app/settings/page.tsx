@@ -135,6 +135,27 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
     
+    if (action === 'updateBalances') {
+      var sheet = ss.getSheetByName("종합잔고조회");
+      if (!sheet) {
+        throw new Error("종합잔고조회 시트를 찾을 수 없습니다.");
+      }
+      var updates = payload.updates;
+      if (updates && updates.length > 0) {
+        for (var i = 0; i < updates.length; i++) {
+          var up = updates[i];
+          var startCol = up.col || 1;
+          sheet.getRange(up.row, startCol, 1, up.values.length).setValues([up.values]);
+        }
+      }
+      
+      updateDashboardAndDividends(ss);
+      
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     // 수동 재계산 액션 지원
     if (action === 'recalculate') {
       updateDashboardAndDividends(ss);

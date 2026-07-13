@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSetting } from '@/lib/db';
-import { syncTransactions } from '@/lib/sync';
+import {
+  syncTransactions,
+  calculateBalancesFromTransactions,
+  syncBalanceSheet,
+  parseSheetRowsToTransactions
+} from '@/lib/sync';
+import { parseIRPBalanceCSV, IRPBalance } from '@/lib/parser';
+import { readSheetValuesFromGAS } from '@/lib/google-sheets';
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,11 +33,50 @@ export async function POST(request: NextRequest) {
       error?: string;
     }> = [];
 
+    let irpBalances: IRPBalance[] | undefined = undefined;
+    let didSyncTransactions = false;
+
+    // First, scan for balance files (like 828종합잔고.csv)
     for (const file of files) {
       const filename = file.name;
-      let sheetName = '';
+      const isBalanceFile = filename.includes('828') && (filename.includes('잔고') || filename.includes('balance'));
+      
+      if (isBalanceFile) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          irpBalances = parseIRPBalanceCSV(buffer);
+          
+          results.push({
+            filename,
+            sheetName: '종합잔고조회',
+            allCount: irpBalances.length,
+            newCount: irpBalances.length,
+            newTransactions: irpBalances,
+            success: true
+          });
+        } catch (err: any) {
+          console.error(`Error parsing IRP balance file ${filename}:`, err);
+          results.push({
+            filename,
+            sheetName: '종합잔고조회',
+            allCount: 0,
+            newCount: 0,
+            newTransactions: [],
+            success: false,
+            error: err.message || '잔고 파일 파싱 중 에러가 발생했습니다.'
+          });
+        }
+      }
+    }
 
-      // Match filename to Google Sheet tab
+    // Next, process transaction files
+    for (const file of files) {
+      const filename = file.name;
+      const isBalanceFile = filename.includes('828') && (filename.includes('잔고') || filename.includes('balance'));
+      if (isBalanceFile) continue;
+
+      let sheetName = '';
       if (filename.includes('180')) {
         sheetName = '180개인연금저축';
       } else if (filename.includes('660')) {
@@ -64,6 +110,8 @@ export async function POST(request: NextRequest) {
           newTransactions: syncResult.newTransactions,
           success: true,
         });
+
+        didSyncTransactions = true;
       } catch (err: any) {
         console.error(`Error syncing file ${filename} to GAS:`, err);
         results.push({
@@ -75,6 +123,30 @@ export async function POST(request: NextRequest) {
           success: false,
           error: err.message || '동기화 중 에러가 발생했습니다.',
         });
+      }
+    }
+
+    // Now, update "종합잔고조회" balance sheet
+    // We do this if any transaction was successfully synced OR IRP balance CSV was uploaded
+    if (didSyncTransactions || irpBalances !== undefined) {
+      try {
+        console.log('Starting balance sheet update in 종합잔고조회...');
+        
+        // 1. Fetch and calculate 180 balances
+        const rows180 = await readSheetValuesFromGAS(gasUrl, '180개인연금저축');
+        const txs180 = parseSheetRowsToTransactions(rows180);
+        const bal180 = calculateBalancesFromTransactions(txs180);
+
+        // 2. Fetch and calculate 660 balances
+        const rows660 = await readSheetValuesFromGAS(gasUrl, '660개인연금저축');
+        const txs660 = parseSheetRowsToTransactions(rows660);
+        const bal660 = calculateBalancesFromTransactions(txs660);
+
+        // 3. Sync to Google Sheet
+        await syncBalanceSheet(gasUrl, bal180, bal660, irpBalances);
+        console.log('Balance sheet updated successfully in GAS.');
+      } catch (err: any) {
+        console.error('Failed to update balance sheet after sync:', err);
       }
     }
 

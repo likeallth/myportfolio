@@ -14,16 +14,7 @@ interface SyncResult {
   sheetName: string;
   allCount: number;
   newCount: number;
-  newTransactions: Array<{
-    date: string;
-    type: string;
-    symbol: string;
-    name: string;
-    amount: number;
-    seq: number;
-    price: number | null;
-    quantity: number | null;
-  }>;
+  newTransactions: any[];
   success: boolean;
   error?: string;
 }
@@ -38,6 +29,9 @@ export default function SyncPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getMatchedSheet = (filename: string): { name: string; isValid: boolean } => {
+    if (filename.includes('828') && (filename.includes('잔고') || filename.includes('balance'))) {
+      return { name: '828종합잔고 (IRP 잔고)', isValid: true };
+    }
     if (filename.includes('180')) {
       return { name: '180개인연금저축', isValid: true };
     }
@@ -194,7 +188,7 @@ export default function SyncPage() {
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>또는 컴퓨터에서 파일 선택하기</p>
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              * 지원 규격: 180개인연금저축.csv / 660개인연금저축.csv / 828개인IRP.csv
+              * 지원 규격: 180개인연금저축.csv / 660개인연금저축.csv / 828개인IRP.csv / 828종합잔고.csv
             </span>
           </div>
         </div>
@@ -320,6 +314,45 @@ export default function SyncPage() {
                 {/* Details */}
                 {!res.success ? (
                   <p style={{ color: 'var(--color-danger)', fontSize: '0.95rem' }}>❌ 에러 내용: {res.error}</p>
+                ) : res.sheetName === '종합잔고조회' ? (
+                  <div>
+                    <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                      IRP 잔고 파일에서 총 <strong>{res.newCount}개</strong>의 자산 정보가 감지되어 종합잔고조회 시트에 정상 반영되었습니다.
+                    </p>
+                    
+                    <div className="table-container">
+                      <table className="premium-table">
+                        <thead>
+                          <tr>
+                            <th>종목명</th>
+                            <th style={{ textAlign: 'right' }}>보유량</th>
+                            <th style={{ textAlign: 'right' }}>매입금액</th>
+                            <th style={{ textAlign: 'right' }}>평가금액</th>
+                            <th style={{ textAlign: 'right' }}>평가손익</th>
+                            <th style={{ textAlign: 'right' }}>수익률</th>
+                            <th style={{ textAlign: 'right' }}>운용비율</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {res.newTransactions.map((bal: any, bIdx: number) => (
+                            <tr key={bIdx}>
+                              <td style={{ fontWeight: 600 }}>{bal.name}</td>
+                              <td style={{ textAlign: 'right' }}>{bal.quantity.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right' }}>₩{bal.purchaseAmount.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right' }}>₩{bal.evalAmount.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right', color: bal.profitLoss > 0 ? 'var(--color-danger)' : bal.profitLoss < 0 ? 'var(--color-success)' : '' }}>
+                                {bal.profitLoss > 0 ? '+' : ''}{bal.profitLoss.toLocaleString()}
+                              </td>
+                              <td style={{ textAlign: 'right', color: bal.yieldPct > 0 ? 'var(--color-danger)' : bal.yieldPct < 0 ? 'var(--color-success)' : '' }}>
+                                {bal.yieldPct > 0 ? '+' : ''}{bal.yieldPct}%
+                              </td>
+                              <td style={{ textAlign: 'right' }}>{bal.ratio}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 ) : res.newCount === 0 ? (
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
                     구글 시트에 이미 해당 파일의 최신 거래내역이 완전히 입력되어 있습니다. 겹치는 부분을 건너뛰었습니다.
