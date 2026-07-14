@@ -269,17 +269,7 @@ export function calculateBalancesFromTransactions(transactions: Transaction[]): 
   // Filter out ignored cash transactions
   const cleanSorted = sorted.filter(t => t.symbol && t.symbol !== 'IGNORED');
 
-  // 3. Find latest transaction for each symbol that contains a valid balance update
-  const latestTxMap: Record<string, Transaction> = {};
-  for (const tx of cleanSorted) {
-    if (!tx.symbol) continue;
-    // Only update latest transaction if it represents a physical stock/fund quantity change
-    if (tx.quantity !== null && tx.quantity > 0) {
-      latestTxMap[tx.symbol] = tx;
-    }
-  }
-
-  // 4. Chronological calculation for average price
+  // 3. Chronological calculation for average price and quantity
   const balances: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
   for (const tx of cleanSorted) {
     const symbol = tx.symbol;
@@ -325,23 +315,7 @@ export function calculateBalancesFromTransactions(transactions: Transaction[]): 
     }
   }
 
-  // 5. Combine: Use latest transaction's stockBalance for quantity
-  const result: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
-  for (const symbol in latestTxMap) {
-    const latestTx = latestTxMap[symbol];
-    const calcBal = balances[symbol] || { avgPrice: 0, name: latestTx.name };
-    
-    // Exact quantity from latest transaction
-    const exactQty = latestTx.stockBalance;
-    
-    result[symbol] = {
-      quantity: exactQty,
-      avgPrice: exactQty > 0 ? calcBal.avgPrice : 0,
-      name: latestTx.name
-    };
-  }
-
-  return result;
+  return balances;
 }
 
 /**
