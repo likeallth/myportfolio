@@ -269,7 +269,27 @@ export function calculateBalancesFromTransactions(transactions: Transaction[]): 
   // Filter out ignored cash transactions
   const cleanSorted = sorted.filter(t => t.symbol && t.symbol !== 'IGNORED');
 
-  // 3. Chronological calculation for average price and quantity
+  // 3. Find the LAST valid transaction for each symbol that contains the true stockBalance from broker
+  const lastStockBalanceMap: Record<string, number> = {};
+  const lastTxNameMap: Record<string, string> = {};
+
+  for (const tx of cleanSorted) {
+    if (!tx.symbol) continue;
+    lastTxNameMap[tx.symbol] = tx.name || lastTxNameMap[tx.symbol];
+    
+    // Check if tx has a valid stock balance recorded from broker
+    // Note: Cash dividends have stockBalance = 0, so we filter for valid trade/balance updates
+    const isTrade = tx.type.includes('매수') || tx.type.includes('매도') || tx.type.includes('펀드') || (tx.quantity !== null && tx.quantity > 0);
+    if (isTrade) {
+      if (tx.stockBalance !== undefined && tx.stockBalance !== null) {
+        if (tx.stockBalance > 0 || tx.type.includes('매도')) {
+          lastStockBalanceMap[tx.symbol] = tx.stockBalance;
+        }
+      }
+    }
+  }
+
+  // 4. Chronological calculation for weighted average price
   const balances: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
   for (const tx of cleanSorted) {
     const symbol = tx.symbol;
@@ -315,7 +335,20 @@ export function calculateBalancesFromTransactions(transactions: Transaction[]): 
     }
   }
 
-  return balances;
+  // 5. Final Result: Combine exact quantity from broker's lastStockBalanceMap with calculated avgPrice
+  const result: Record<string, { quantity: number; avgPrice: number; name: string }> = {};
+  for (const symbol in lastTxNameMap) {
+    const calcBal = balances[symbol] || { avgPrice: 0, name: lastTxNameMap[symbol] };
+    const exactQty = lastStockBalanceMap[symbol] !== undefined ? lastStockBalanceMap[symbol] : calcBal.quantity;
+
+    result[symbol] = {
+      quantity: exactQty,
+      avgPrice: exactQty > 0 ? calcBal.avgPrice : 0,
+      name: lastTxNameMap[symbol] || calcBal.name
+    };
+  }
+
+  return result;
 }
 
 /**
