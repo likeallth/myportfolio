@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 📈 연금 투자 일지 & 자산 배분 대시보드 (Portfolio Dashboard)
 
-## Getting Started
+구글 파이낸스 실시간 주가 및 구글 시트 거래 내역이 동기화되는 **개인 연금 / IRP 자산 배분 및 수익률 대시보드 웹 애플리케이션**입니다.
 
-First, run the development server:
+---
 
+## 🌟 주요 기능 (Key Features)
+
+1. **실시간 종합 포트폴리오 현황**:
+   - 총 평가 자산, 총 납입 원금, 누적 평가 손익, 전체 수익률 실시간 산출
+   - 180 개인연금저축, 660 개인연금저축, 828 개인IRP 계좌별 자산 현황 요약
+2. **자산 배분 및 리밸런싱 가이드**:
+   - 주식, 채권, 금(Gold), 현금성 자산 4대 자산군 비중 분석
+   - 실제 비중 vs 목표 비중 비교 및 추가 매수/매도 필요 금액 자동 안내
+3. **2026년 당해년도 누적 입금액 포트폴리오 & 추가 입금 시뮬레이터**:
+   - 2026년 계좌별 누적 입금액 및 세액공제 한도 달성률 가우징
+   - 180 vs 660 계좌 당해년도 입금 포트폴리오 비교 도넛 차트
+   - 향후 추가 입금액 슬라이더를 통한 자산군별 추천 매수 금액 시뮬레이션
+4. **월별 분배금(배당금) 통계**:
+   - 거래내역 자동 집계 바 차트 및 최근 배당금 수령 내역 로그
+5. **다중 데이터 수신 & 안전망 (3중 데이터 연결)**:
+   - **1순위**: Google Sheets API v4 (OAuth 2.0 1클릭 구글 계정 인증)
+   - **2순위**: Google Apps Script(GAS) Web App 수식 연동
+   - **3순위**: 로컬 엑셀 데이터 파일(`data/연금투자일지.xlsx`) 오프라인 폴백
+
+---
+
+## 🛠️ 개발 환경 & 실행 방법 (Getting Started)
+
+### 1. 개발 서버 실행
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+
+# 아이패드 및 모바일 기기 로컬 접속 허용 시
+npm run dev:host
+```
+아이패드/스마트폰 접속: `http://192.168.219.102:3000`
+
+### 2. 프로덕션 빌드
+```bash
+npm run build
+npm run start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📜 구현 계획 이력 관리 (Implementation Plan History)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+프로젝트 개발 과정에서 작성된 상세 구조 및 기능 설계 문서 이력입니다:
 
-## Learn More
+- 📄 [2026-07-26 당해년도 누적 입금액 포트폴리오 & 향후 분배 시뮬레이터 구현 계획](docs/plans/2026-07-26_ytd_deposit_and_future_allocation.md)
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🔗 배포 (Deployment)
+Vercel을 통해 GitHub `main` 브랜치 변경 사항이 실시간으로 웹에 자동 배포됩니다.
