@@ -645,6 +645,24 @@ function getDividendTransactions(ss) {
         
         {/* Left Side: Setup Form and Copy Code */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+
+          {/* 0. Google OAuth 2.0 1-Click Connection Card */}
+          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', borderLeft: '4px solid var(--color-primary)' }}>
+            <h2 style={{ fontSize: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              🔑 구글 계정 1클릭 연동 (OAuth 2.0 공식 API)
+            </h2>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+              <code>ebook-capture</code> 구글 인증 키를 활용하여 1클릭 로그인으로 권한을 부여받고, Google Sheets API v4로 실시간 연결합니다.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+              <a href="/api/auth/google/login" className="btn btn-primary" style={{ padding: '0.75rem 1.8rem', fontSize: '0.95rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                🚀 구글 계정 1클릭 인증하기
+              </a>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                * 버튼 클릭 시 구글 권한 승인 후 대시보드가 자동 연결됩니다.
+              </span>
+            </div>
+          </div>
           
           {/* Form Panel */}
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>

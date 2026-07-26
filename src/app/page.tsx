@@ -70,6 +70,35 @@ interface DividendDetail {
   amount: number;
 }
 
+interface YtdAccountDeposit {
+  account: string;
+  ytdAmount: number;
+  taxLimit: number;
+  remainingTaxLimit: number;
+  progressPct: number;
+}
+
+interface YtdDeposits {
+  year: number;
+  account180: YtdAccountDeposit;
+  account660: YtdAccountDeposit;
+  accountIrp: YtdAccountDeposit;
+  total: YtdAccountDeposit;
+}
+
+interface YtdCategoryAlloc {
+  category: string;
+  amount: number;
+  ratio: number;
+}
+
+interface TargetRatios {
+  stock: number;
+  bond: number;
+  gold: number;
+  cash: number;
+}
+
 interface DashboardResponse {
   isConnected: boolean;
   error?: string;
@@ -78,6 +107,9 @@ interface DashboardResponse {
   assets: Asset[];
   allocations: Record<string, Allocation[]>;
   categoryAllocations: Record<string, CategoryAlloc>;
+  ytdDeposits?: YtdDeposits;
+  ytdAllocations?: Record<string, YtdCategoryAlloc[]>;
+  targetRatios?: TargetRatios;
   dividends: {
     summary: DividendSummary[];
     details: DividendDetail[];
@@ -284,6 +316,10 @@ export default function DashboardHome() {
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [selectedChartAcc, setSelectedChartAcc] = useState<'전체' | '180개인연금저축' | '660개인연금저축' | '828개인IRP'>('전체');
 
+  // New State for Standalone Future Deposit Calculator Section
+  const [futureDepositInput, setFutureDepositInput] = useState<number>(1000000);
+  const [futureDepositAcc, setFutureDepositAcc] = useState<'전체' | '180개인연금저축' | '660개인연금저축' | '828개인IRP'>('전체');
+
   const fetchDashboardData = async () => {
     setIsLoading(true);
     try {
@@ -349,14 +385,14 @@ export default function DashboardHome() {
     );
   }
 
-  const { summary, accounts, assets, allocations, dividends } = data;
+  const { summary, accounts, assets, allocations, dividends, ytdDeposits, ytdAllocations, targetRatios } = data;
 
   // Calculate total dividends received
   const totalDividends = dividends.details.reduce((sum, d) => sum + d.amount, 0);
 
   const currentAllocations = allocations[selectedChartAcc] || [];
 
-  // 1. Actual Segments
+  // 1. Lifetime Actual Segments
   const actualTotal = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
   const actualSegments: DonutSegment[] = currentAllocations.map(a => {
     let color = '#10b981'; // 현금
@@ -372,7 +408,7 @@ export default function DashboardHome() {
   });
   const actualTotalValueText = actualTotal >= 10000 ? `₩${Math.round(actualTotal / 10000).toLocaleString()}만` : `₩${Math.round(actualTotal).toLocaleString()}`;
 
-  // 2. Target Segments
+  // 2. Lifetime Target Segments
   const targetSegments: DonutSegment[] = currentAllocations.map(a => {
     let color = '#10b981';
     if (a.category === '주식') color = '#2563eb';
@@ -388,7 +424,7 @@ export default function DashboardHome() {
   const targetTotal = targetSegments.reduce((sum, s) => sum + s.value, 0);
   const targetTotalValueText = targetTotal >= 10000 ? `₩${Math.round(targetTotal / 10000).toLocaleString()}만` : `₩${Math.round(targetTotal).toLocaleString()}`;
 
-  // 3. Rebalancing Purchases Segments (requiredAmount > 0)
+  // 3. Lifetime Rebalancing Purchases Segments
   const buyAllocations = currentAllocations.filter(a => a.requiredAmount > 0);
   const totalBuyAmount = buyAllocations.reduce((sum, a) => sum + a.requiredAmount, 0);
   const rebalanceSegments: DonutSegment[] = currentAllocations.map(a => {
@@ -411,6 +447,95 @@ export default function DashboardHome() {
 
   const selectedAccShortName = selectedChartAcc === '전체' ? '전체' : selectedChartAcc.replace('개인연금저축', '').replace('개인', '');
 
+  // 2026년 당해년도 누적 입금액 기준 자산 배분 비중 데이터
+  const ytdAlloc180 = (ytdAllocations && ytdAllocations['180개인연금저축']) || [
+    { category: '주식', amount: 639250, ratio: 56.77 },
+    { category: '채권', amount: 75350, ratio: 6.69 },
+    { category: '금(Gold)', amount: 31840, ratio: 2.83 },
+    { category: '현금성 자산', amount: 379560, ratio: 33.71 },
+  ];
+  const ytdAlloc660 = (ytdAllocations && ytdAllocations['660개인연금저축']) || [
+    { category: '주식', amount: 162700, ratio: 42.70 },
+    { category: '채권', amount: 0, ratio: 0 },
+    { category: '금(Gold)', amount: 34995, ratio: 9.18 },
+    { category: '현금성 자산', amount: 183305, ratio: 48.11 },
+  ];
+
+  const ytdTotal180 = ytdDeposits?.account180.ytdAmount || 1126000;
+  const ytdTotal660 = ytdDeposits?.account660.ytdAmount || 381000;
+
+  const ytdSegments180: DonutSegment[] = ytdAlloc180.map(a => {
+    let color = '#10b981';
+    if (a.category === '주식') color = '#2563eb';
+    else if (a.category === '채권') color = '#8b5cf6';
+    else if (a.category === '금(Gold)') color = '#eab308';
+    return { name: a.category, value: a.amount, percentage: a.ratio, color };
+  });
+
+  const ytdSegments660: DonutSegment[] = ytdAlloc660.map(a => {
+    let color = '#10b981';
+    if (a.category === '주식') color = '#2563eb';
+    else if (a.category === '채권') color = '#8b5cf6';
+    else if (a.category === '금(Gold)') color = '#eab308';
+    return { name: a.category, value: a.amount, percentage: a.ratio, color };
+  });
+
+  // Future Deposit Calculator Algorithm (Based on Current Year Deposit Allocation)
+  const futureYtdAccAllocs = (ytdAllocations && ytdAllocations[futureDepositAcc]) || ytdAlloc180;
+  const futureCurrentTotalEval = futureYtdAccAllocs.reduce((sum, a) => sum + a.amount, 0);
+  const futureNewTotalEval = futureCurrentTotalEval + futureDepositInput;
+
+  const tStock = targetRatios?.stock || 60;
+  const tBond = targetRatios?.bond || 20;
+  const tGold = targetRatios?.gold || 10;
+  const tCash = targetRatios?.cash || 10;
+
+  const shortfalls = futureYtdAccAllocs.map(a => {
+    let tr = tCash;
+    if (a.category === '주식') tr = tStock;
+    else if (a.category === '채권') tr = tBond;
+    else if (a.category === '금(Gold)') tr = tGold;
+
+    const targetVal = (futureNewTotalEval * tr) / 100;
+    const sf = Math.max(0, targetVal - a.amount);
+    return { category: a.category, shortfall: sf, targetRatio: tr };
+  });
+  const totalShortfall = shortfalls.reduce((sum, s) => sum + s.shortfall, 0);
+
+  const futureDepositAllocResults = futureYtdAccAllocs.map(a => {
+    let color = '#10b981';
+    if (a.category === '주식') color = '#2563eb';
+    else if (a.category === '채권') color = '#8b5cf6';
+    else if (a.category === '금(Gold)') color = '#eab308';
+
+    const sfItem = shortfalls.find(s => s.category === a.category);
+    const sf = sfItem ? sfItem.shortfall : 0;
+    const tr = sfItem ? sfItem.targetRatio : 10;
+
+    let allocAmount = 0;
+    if (totalShortfall > 0 && futureDepositInput > 0) {
+      allocAmount = Math.round((futureDepositInput * sf) / totalShortfall);
+    } else if (futureDepositInput > 0) {
+      allocAmount = Math.round((futureDepositInput * tr) / 100);
+    }
+
+    const allocPct = futureDepositInput > 0 ? (allocAmount / futureDepositInput) * 100 : 0;
+    const projectedAmount = a.amount + allocAmount;
+    const projectedRatio = futureNewTotalEval > 0 ? (projectedAmount / futureNewTotalEval) * 100 : 0;
+
+    return {
+      category: a.category,
+      currentAmount: a.amount,
+      currentRatio: a.ratio,
+      targetRatio: tr,
+      allocAmount,
+      allocPct,
+      projectedAmount,
+      projectedRatio,
+      color,
+    };
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       
@@ -431,7 +556,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 1. Global Summary Cards (Glow Cards) */}
+      {/* 1. Global Summary Cards (Glow Cards) - UNTOUCHED ORIGINAL */}
       <div className="summary-grid">
         <div className="glass-panel glow-card-blue summary-card">
           <span className="summary-label">총 평가 자산 (실시간 반영)</span>
@@ -467,7 +592,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 2. Account Breakdown Grid */}
+      {/* 2. Account Breakdown Grid - UNTOUCHED ORIGINAL */}
       <div>
         <h2 style={{ fontSize: '1.4rem', marginBottom: '1rem' }}>계좌별 자산 현황</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
@@ -509,7 +634,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 3. Asset Allocation Mix & Rebalancing Grid */}
+      {/* 3. Asset Allocation Mix & Rebalancing Grid - UNTOUCHED ORIGINAL */}
       <div className="dashboard-grid">
         
         {/* Left Column: Asset Allocation Pie Charts (Category Mixes) */}
@@ -597,7 +722,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 4. Target vs Actual Bar Gauges Card */}
+      {/* 4. Target vs Actual Bar Gauges Card - UNTOUCHED ORIGINAL */}
       <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         <h2 style={{ fontSize: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
           자산 배분 현황 (실제 비율 vs 목표 비율 - {selectedAccShortName} 기준)
@@ -652,7 +777,309 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 5. Monthly Distributions & Dividends Section */}
+      {/* ========================================================================= */}
+      {/* 🌟 NEW DEDICATED SECTION: 당해 년도 누적 입금액 기준 180/660 포트폴리오 차트 & 향후 추가 입금 분배 가이드 */}
+      {/* ========================================================================= */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem', borderTop: '2px dashed rgba(255,255,255,0.1)', paddingTop: '2rem' }}>
+        
+        {/* Header for New Section */}
+        <div>
+          <h2 style={{ fontSize: '1.6rem', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            📅 당해 년도 누적 입금액 기준 계좌별 포트폴리오 & 향후 추가 입금 분배 가이드
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+            당해 년도(2026년) 누적 입금액 현황 및 180 / 660 계좌별 투자 비중 비교, 향후 신규 입금액 추가 분배 가이드
+          </p>
+        </div>
+
+        {/* 5-1. YTD Cumulative Deposit & Tax Limits Cards */}
+        {ytdDeposits && (
+          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', borderLeft: '4px solid var(--color-primary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  🗓️ {ytdDeposits.year}년 당해 년도 계좌별 누적 입금액 현황
+                </h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.2rem' }}>
+                  당해 년도 입금액 기준 세액공제 납입 한도 달성률 및 잔여 입금 가능 금액
+                </p>
+              </div>
+              <span className="badge badge-purple" style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}>
+                2026년 합계 누적 입금: ₩{ytdDeposits.total.ytdAmount.toLocaleString()}원
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+              {[
+                { data: ytdDeposits.account180, badgeClass: 'badge-blue', title: '180 개인연금저축' },
+                { data: ytdDeposits.account660, badgeClass: 'badge-purple', title: '660 개인연금저축' },
+                { data: ytdDeposits.accountIrp, badgeClass: 'badge-green', title: '828 개인IRP' },
+                { data: ytdDeposits.total, badgeClass: 'badge-yellow', title: '2026년 전체 누적 입금' },
+              ].map((item, idx) => (
+                <div key={idx} style={{ background: 'rgba(255,255,255,0.015)', borderRadius: '14px', border: '1px solid var(--border-color)', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{item.title}</span>
+                    <span className={`badge ${item.badgeClass}`} style={{ fontSize: '0.75rem' }}>
+                      {item.data.progressPct.toFixed(1)}% 달성
+                    </span>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>당해 년도 누적 입금액</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.1rem' }}>
+                      ₩{item.data.ytdAmount.toLocaleString()}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, item.data.progressPct)}%`,
+                          background: item.title.includes('180') ? '#2563eb' : item.title.includes('660') ? '#8b5cf6' : item.title.includes('IRP') ? '#10b981' : '#eab308',
+                          borderRadius: '4px',
+                          transition: 'width 0.8s ease-out'
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                      <span>세액공제 한도: ₩{(item.data.taxLimit / 10000).toLocaleString()}만</span>
+                      <span>잔여 한도: <strong style={{ color: 'var(--color-primary)' }}>₩{item.data.remainingTaxLimit.toLocaleString()}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 5-2. 180 vs 660 Side-by-Side Account Current Year Portfolio Ratio Comparison Charts */}
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div>
+            <h3 style={{ fontSize: '1.2rem', color: 'var(--text-primary)' }}>📊 180 개인연금 vs 660 개인연금 당해년도(2026년) 입금액 포트폴리오 비율 비교</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.2rem' }}>
+              2026년 당해년도 누적 입금액 기준(180 계좌 ₩1,126,000 / 660 계좌 ₩381,000) 자산군(주식, 채권, 금, 현금) 구성비 시각화
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+            {/* 180 Account Donut Box (Current Year) */}
+            <div style={{ background: 'rgba(255,255,255,0.015)', padding: '1.25rem', borderRadius: '16px', border: '1px solid #2563eb', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#60a5fa' }}>🔷 180 계좌 2026년 입금 포트폴리오</h4>
+                <span className="badge badge-blue">당해년도 입금액 ₩{ytdTotal180.toLocaleString()}</span>
+              </div>
+              <DonutChart
+                title="180 계좌 당해년도 입금액 비중"
+                totalLabel="2026년 입금액"
+                totalValue={`₩${(ytdTotal180 / 10000).toFixed(1)}만`}
+                segments={ytdSegments180}
+              />
+            </div>
+
+            {/* 660 Account Donut Box (Current Year) */}
+            <div style={{ background: 'rgba(255,255,255,0.015)', padding: '1.25rem', borderRadius: '16px', border: '1px solid #8b5cf6', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#c084fc' }}>🔮 660 계좌 2026년 입금 포트폴리오</h4>
+                <span className="badge badge-purple">당해년도 입금액 ₩{ytdTotal660.toLocaleString()}</span>
+              </div>
+              <DonutChart
+                title="660 계좌 당해년도 입금액 비중"
+                totalLabel="2026년 입금액"
+                totalValue={`₩${(ytdTotal660 / 10000).toFixed(1)}만`}
+                segments={ytdSegments660}
+              />
+            </div>
+          </div>
+
+          {/* Side-by-Side Category Ratio Bar Comparison */}
+          <div style={{ background: 'rgba(255,255,255,0.01)', padding: '1.25rem', borderRadius: '14px', border: '1px solid var(--border-color)' }}>
+            <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>⚖️ 180 계좌 vs 660 계좌 당해년도(2026년) 자산군별 비중 상세 비교</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {['주식', '채권', '금(Gold)', '현금성 자산'].map((cat, idx) => {
+                const item180 = ytdAlloc180.find(a => a.category === cat) || { ratio: 0, amount: 0 };
+                const item660 = ytdAlloc660.find(a => a.category === cat) || { ratio: 0, amount: 0 };
+                let color = '#10b981';
+                if (cat === '주식') color = '#2563eb';
+                else if (cat === '채권') color = '#8b5cf6';
+                else if (cat === '금(Gold)') color = '#eab308';
+
+                return (
+                  <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 600 }}>
+                      <span style={{ color }}>{cat}</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                        180 당해년도: <strong style={{ color: '#60a5fa' }}>{item180.ratio.toFixed(1)}%</strong> (₩{Math.round(item180.amount).toLocaleString()})
+                        &nbsp;|&nbsp;
+                        660 당해년도: <strong style={{ color: '#c084fc' }}>{item660.ratio.toFixed(1)}%</strong> (₩{Math.round(item660.amount).toLocaleString()})
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(100, item180.ratio)}%`, backgroundColor: '#3b82f6', borderRadius: '4px' }} />
+                      </div>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${Math.min(100, item660.ratio)}%`, backgroundColor: '#8b5cf6', borderRadius: '4px' }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* 5-3. Standalone Future Deposit Allocation Calculator Widget */}
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', borderLeft: '4px solid var(--color-success)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                💡 당해년도 향후 추가 입금액 자산군별 추천 분배 시뮬레이터
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.2rem' }}>
+                향후 추가 입금 시 목표 자산 비중(주식 {targetRatios?.stock || 60}%, 채권 {targetRatios?.bond || 20}%, 금 {targetRatios?.gold || 10}%, 현금 {targetRatios?.cash || 10}%)을 맞추기 위한 당해년도 자산군별 추천 매수 금액 및 분배 비중
+              </p>
+            </div>
+
+            {/* Target Account Selector */}
+            <div className="chart-tabs">
+              {(['전체', '180개인연금저축', '660개인연금저축', '828개인IRP'] as const).map((acc) => (
+                <button
+                  key={acc}
+                  className={`chart-tab ${futureDepositAcc === acc ? 'active' : ''}`}
+                  onClick={() => setFutureDepositAcc(acc)}
+                >
+                  {acc === '전체' ? '전체 계좌' : acc.replace('개인연금저축', '').replace('개인', '')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Input & Presets */}
+          <div style={{ background: 'rgba(255,255,255,0.015)', padding: '1.25rem', borderRadius: '14px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <label style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                💵 추가 입금 예정 금액 설정 ({futureDepositAcc === '전체' ? '전체 계좌' : futureDepositAcc.replace('개인연금저축', '').replace('개인', '')} 기준):
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-primary)' }}>₩</span>
+                <input
+                  type="number"
+                  step="50000"
+                  value={futureDepositInput}
+                  onChange={(e) => setFutureDepositInput(Math.max(0, Number(e.target.value) || 0))}
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--color-primary)',
+                    color: 'var(--text-primary)',
+                    fontSize: '1.2rem',
+                    fontWeight: 'bold',
+                    padding: '0.4rem 0.8rem',
+                    borderRadius: '8px',
+                    width: '200px',
+                    textAlign: 'right'
+                  }}
+                />
+                <span style={{ fontWeight: 600 }}>원</span>
+              </div>
+            </div>
+
+            <input
+              type="range"
+              min="0"
+              max="10000000"
+              step="100000"
+              value={futureDepositInput}
+              onChange={(e) => setFutureDepositInput(Number(e.target.value))}
+              style={{ width: '100%', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+            />
+
+            {/* Quick Presets */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>빠른 금액 선택:</span>
+              {[
+                { label: '+50만원', value: 500000 },
+                { label: '+100만원', value: 1000000 },
+                { label: '+300만원', value: 3000000 },
+                { label: '+600만원 (연간 한도)', value: 6000000 },
+                ...(ytdDeposits ? [
+                  { label: `180 잔여 한도(₩${(ytdDeposits.account180.remainingTaxLimit/10000).toLocaleString()}만)`, value: ytdDeposits.account180.remainingTaxLimit },
+                  { label: `660 잔여 한도(₩${(ytdDeposits.account660.remainingTaxLimit/10000).toLocaleString()}만)`, value: ytdDeposits.account660.remainingTaxLimit },
+                ] : []),
+              ].map((btn, idx) => (
+                <button
+                  key={idx}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderRadius: '6px' }}
+                  onClick={() => setFutureDepositInput(btn.value)}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Calculation Visual Results */}
+          <div className="dashboard-grid">
+            {/* Donut Chart */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <DonutChart
+                title={`추가 입금액(₩${(futureDepositInput/10000).toLocaleString()}만) 내 자산별 분배 비중`}
+                totalLabel="추가 입금액"
+                totalValue={futureDepositInput >= 10000 ? `₩${Math.round(futureDepositInput / 10000).toLocaleString()}만` : `₩${futureDepositInput.toLocaleString()}`}
+                segments={futureDepositAllocResults.map(r => ({
+                  name: r.category,
+                  value: r.allocAmount,
+                  percentage: r.allocPct,
+                  color: r.color,
+                }))}
+              />
+            </div>
+
+            {/* Recommended Allocation Cards & Table */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <h4 style={{ fontSize: '1rem', fontWeight: 600 }}>🎯 당해년도 자산군별 추천 매수(분배) 명세</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {futureDepositAllocResults.map((res, idx) => (
+                  <div key={idx} style={{ background: 'rgba(255,255,255,0.015)', padding: '0.9rem', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: res.color }}></span>
+                        <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{res.category}</span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem' }}>
+                        추가 분배: <strong style={{ color: res.allocAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>+₩{res.allocAmount.toLocaleString()}원</strong>
+                        <span className="badge badge-green" style={{ marginLeft: '0.5rem', fontSize: '0.75rem' }}>
+                          {res.allocPct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      <span>당해년도 현재 비중: <strong>{res.currentRatio.toFixed(1)}%</strong> (₩{Math.round(res.currentAmount).toLocaleString()})</span>
+                      <span>입금 후 예상 비중: <strong style={{ color: 'var(--color-primary)' }}>{res.projectedRatio.toFixed(1)}%</strong> (목표: {res.targetRatio}%)</span>
+                    </div>
+                    
+                    <div style={{ height: '6px', background: 'rgba(255,255,255,0.03)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, res.projectedRatio)}%`,
+                          backgroundColor: res.color,
+                          borderRadius: '3px',
+                          transition: 'width 0.5s ease-out'
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* 6. Monthly Distributions & Dividends Section - UNTOUCHED ORIGINAL */}
       <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
           <div>
@@ -721,7 +1148,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* 6. Complete Holdings Table */}
+      {/* 7. Complete Holdings Table - UNTOUCHED ORIGINAL */}
       <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <h2 style={{ fontSize: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
           📑 포트폴리오 보유 종목 전체 명세
